@@ -1,62 +1,51 @@
-from django.http import HttpResponse
-from django.views.decorators.csrf import csrf_exempt
-from rest_framework.renderers import JSONRenderer
-from rest_framework.parsers import JSONParser
 from cpp_api.models import CppApi
-from cpp_api.serializers import CppApiSerializer
+from cpp_api.serializers import CppApiSerializer, UserSerializer
+from rest_framework import generics, renderers
+from django.contrib.auth.models import User
+from rest_framework import permissions
+from cpp_api.permissions import IsOwnerOrReadOnly
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+from rest_framework.reverse import reverse
 
 
-class JSONResponse(HttpResponse):
-    """
-    An HttpResponse that renders its content into JSON.
-    """
-    def __init__(self, data, **kwargs):
-        content = JSONRenderer().render(data)
-        kwargs['content_type'] = 'application/json'
-        super(JSONResponse, self).__init__(content, **kwargs)
+@api_view(('GET',))
+def api_root(request, format=None):
+    return Response({
+        'users': reverse('user-list', request=request, format=format),
+        'snippets': reverse('cppapi-list', request=request, format=format)
+    })
 
 
-@csrf_exempt
-def snippet_list(request):
-    """
-    List all code snippets, or create a new snippet.
-    """
-    if request.method == 'GET':
-        snippets = CppApi.objects.all()
-        serializer = CppApiSerializer(snippets, many=True)
-        return JSONResponse(serializer.data)
+class SnippetList(generics.ListCreateAPIView):
+    queryset = CppApi.objects.all()
+    serializer_class = CppApiSerializer
+    permission_classes = (permissions.IsAuthenticatedOrReadOnly,)
 
-    elif request.method == 'POST':
-        data = JSONParser().parse(request)
-        serializer = CppApiSerializer(data=data)
-        if serializer.is_valid():
-            serializer.save()
-            return JSONResponse(serializer.data, status=201)
-        return JSONResponse(serializer.errors, status=400)
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
 
 
-@csrf_exempt
-def snippet_detail(request, pk):
-    """
-    Retrieve, update or delete a code snippet.
-    """
-    try:
-        snippet = CppApi.objects.get(pk=pk)
-    except CppApi.DoesNotExist:
-        return HttpResponse(status=404)
+class SnippetDetail(generics.RetrieveUpdateDestroyAPIView):
+    queryset = CppApi.objects.all()
+    serializer_class = CppApiSerializer
+    permission_classes = (permissions.IsAuthenticatedOrReadOnly, IsOwnerOrReadOnly)
 
-    if request.method == 'GET':
-        serializer = CppApiSerializer(snippet)
-        return JSONResponse(serializer.data)
 
-    elif request.method == 'PUT':
-        data = JSONParser().parse(request)
-        serializer = CppApiSerializer(snippet, data=data)
-        if serializer.is_valid():
-            serializer.save()
-            return JSONResponse(serializer.data)
-        return JSONResponse(serializer.errors, status=400)
+class UserList(generics.ListAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
 
-    elif request.method == 'DELETE':
-        snippet.delete()
-        return HttpResponse(status=204)
+
+class UserDetail(generics.RetrieveAPIView):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+
+
+class SnippetHighlight(generics.GenericAPIView):
+    queryset = CppApi.objects.all()
+    renderer_classes = (renderers.StaticHTMLRenderer,)
+
+    def get(self, request, *args, **kwargs):
+        snippet = self.get_object()
+        return Response(snippet.highlighted)
